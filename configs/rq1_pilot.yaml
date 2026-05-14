@@ -61,9 +61,9 @@ data:
   source: synthetic
   vocab_size: 32000
   seq_len: 128
-  batch_size: 4
+  batch_size: 32
   dataset_size: 40000
-  num_workers: 0
+  num_workers: 4
 
 train:
   algorithm_mode: two_pass_stopgrad_updates
@@ -83,8 +83,8 @@ train:
     enabled: true
     dtype: bf16
   compile:
-    enable: false
-    mode: max-autotune
+    enable: true
+    mode: reduce-overhead
   checkpoint:
     enable: true
     dir: artifacts/rq1_checkpoint

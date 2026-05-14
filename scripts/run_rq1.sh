@@ -18,8 +18,8 @@ uv run python scripts/rq1_analysis.py \
   --device "$DEVICE" \
   --num-batches 50 \
   --num-grad-batches 5 \
-  --seq-len 256 \
-  --batch-size 4
+  --seq-len 128 \
+  --batch-size 32
 
 echo ""
 echo "Done. Results:"

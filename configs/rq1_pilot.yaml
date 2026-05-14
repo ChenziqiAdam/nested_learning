@@ -1,0 +1,109 @@
+defaults:
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  job:
+    chdir: false
+
+model:
+  vocab_size: 32000
+  dim: 512
+  num_layers: 12
+  heads: 8
+  block_variant: hope_attention
+  qk_l2_norm: true
+  local_conv_window: 4
+  teach_scale: 0.10
+  teach_clip: 5.0
+  surprise_threshold: 0.02
+  freeze_backbone: false
+  self_mod_lr: 0.001
+  teach_schedule:
+    warmup_steps: 500
+    decay_start: 4000
+    decay_duration: 500
+  titan_level:
+    name: titan
+    update_period: 8
+    optimizer_key: titan_opt
+  cms_levels:
+    - name: cms_fast
+      update_period: 1
+      optimizer_key: cms_opt
+    - name: cms_mid
+      update_period: 4
+      optimizer_key: cms_opt
+    - name: cms_slow
+      update_period: 32
+      optimizer_key: cms_opt
+    - name: cms_ultra
+      update_period: 128
+      optimizer_key: cms_opt
+  optimizers:
+    titan_opt:
+      type: deep_momentum
+      lr: 6.0e-4
+      params:
+        beta: 0.9
+        beta2: 0.999
+        variant: nl_l2_precond
+    cms_opt:
+      type: deep_momentum
+      lr: 3.0e-4
+      params:
+        beta: 0.9
+        beta2: 0.999
+        variant: nl_l2_precond
+
+data:
+  source: synthetic
+  seq_len: 256
+  batch_size: 4
+  num_workers: 0
+
+train:
+  algorithm_mode: two_pass_stopgrad_updates
+  strict_streaming_contract: false
+  online_updates: true
+  online_chunk_size: 0
+  online_boundary_targets: false
+  online_carry_attention_cache: false
+  per_layer_teach_signal: true
+  steps: 5000
+  log_interval: 100
+  device: "cuda:0"
+  seed: 42
+  deterministic: false
+  step_offset: 0
+  mixed_precision:
+    enabled: true
+    dtype: bf16
+  compile:
+    enable: false
+    mode: max-autotune
+  checkpoint:
+    enable: true
+    dir: artifacts/rq1_checkpoint
+    save_interval: 1000
+    save_last: true
+    resume_path: null
+    resume_tag: null
+
+optim:
+  type: muon
+  lr: 2.5e-4
+  weight_decay: 0.02
+  momentum: 0.95
+  betas:
+    - 0.9
+    - 0.999
+
+logging:
+  enabled: false
+  backend: json
+  path: logs/rq1_metrics.json
+  project: nested-learning
+  run_name: rq1-pilot

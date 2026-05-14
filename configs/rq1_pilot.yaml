@@ -10,21 +10,20 @@ hydra:
 
 model:
   vocab_size: 32000
-  dim: 512
-  num_layers: 12
-  heads: 8
+  dim: 256
+  num_layers: 4
+  heads: 4
   block_variant: hope_attention
   qk_l2_norm: true
-  local_conv_window: 4
   teach_scale: 0.10
   teach_clip: 5.0
   surprise_threshold: 0.02
   freeze_backbone: false
   self_mod_lr: 0.001
   teach_schedule:
-    warmup_steps: 500
-    decay_start: 4000
-    decay_duration: 500
+    warmup_steps: 100
+    decay_start: 800
+    decay_duration: 100
   titan_level:
     name: titan
     update_period: 8
@@ -60,8 +59,10 @@ model:
 
 data:
   source: synthetic
-  seq_len: 256
+  vocab_size: 32000
+  seq_len: 128
   batch_size: 4
+  dataset_size: 40000
   num_workers: 0
 
 train:
@@ -71,9 +72,9 @@ train:
   online_chunk_size: 0
   online_boundary_targets: false
   online_carry_attention_cache: false
-  per_layer_teach_signal: true
-  steps: 5000
-  log_interval: 100
+  per_layer_teach_signal: false
+  steps: 1000
+  log_interval: 10
   device: "cuda:0"
   seed: 42
   deterministic: false
@@ -93,10 +94,9 @@ train:
     resume_tag: null
 
 optim:
-  type: muon
+  type: adamw
   lr: 2.5e-4
   weight_decay: 0.02
-  momentum: 0.95
   betas:
     - 0.9
     - 0.999

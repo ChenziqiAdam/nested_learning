@@ -62,6 +62,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--batch-size", type=int, default=4)
     p.add_argument("--device", default="cuda:0" if torch.cuda.is_available() else "cpu")
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--hf-dataset", default=None,
+                   help="HuggingFace dataset to use instead of synthetic data, "
+                        "e.g. 'wikitext,wikitext-103-raw-v1,test'  (name,subset,split)")
     return p.parse_args()
 
 
@@ -118,7 +121,11 @@ def make_data_iter(
     batch_size: int,
     device: torch.device,
     seed: int = 42,
+    hf_dataset: str | None = None,
 ):
+    if hf_dataset is not None:
+        yield from _make_hf_data_iter(hf_dataset, num_batches, seq_len, batch_size, device, seed)
+        return
     cfg_d = SyntheticTextConfig(
         vocab_size=vocab_size,
         seq_len=seq_len,
@@ -135,6 +142,57 @@ def make_data_iter(
         if i >= num_batches:
             break
         yield tokens.to(device)
+
+
+def _make_hf_data_iter(
+    hf_dataset: str,
+    num_batches: int,
+    seq_len: int,
+    batch_size: int,
+    device: torch.device,
+    seed: int,
+):
+    """Load a HuggingFace dataset from local cache and tokenize with GPT-2 tokenizer."""
+    from datasets import load_dataset as hf_load
+    from transformers import AutoTokenizer
+
+    parts = hf_dataset.split(",")
+    ds_name = parts[0]
+    subset = parts[1] if len(parts) > 1 else None
+    split = parts[2] if len(parts) > 2 else "train"
+
+    print(f"[data] Loading {ds_name} subset={subset} split={split} from HF cache...")
+    tokenizer = AutoTokenizer.from_pretrained("gpt2")
+    tokenizer.pad_token = tokenizer.eos_token
+
+    load_kwargs = {}
+    if subset:
+        load_kwargs["name"] = subset
+    ds = hf_load(ds_name, split=split, **load_kwargs)
+
+    rng = np.random.default_rng(seed)
+    # Concatenate all text, tokenize, chunk into seq_len windows
+    all_text = " ".join(row["text"] for row in ds if row.get("text", "").strip())
+    token_ids = tokenizer.encode(all_text)
+    token_ids = np.array(token_ids, dtype=np.int32)
+
+    total_seqs = len(token_ids) // seq_len
+    if total_seqs == 0:
+        raise RuntimeError(f"Not enough tokens in {hf_dataset} for seq_len={seq_len}")
+    token_ids = token_ids[: total_seqs * seq_len].reshape(total_seqs, seq_len)
+
+    indices = rng.permutation(total_seqs)
+    needed = num_batches * batch_size
+    # Tile if dataset is smaller than needed
+    if len(indices) < needed:
+        repeats = (needed // len(indices)) + 1
+        indices = np.tile(indices, repeats)
+    indices = indices[:needed]
+
+    for i in range(num_batches):
+        batch_idx = indices[i * batch_size : (i + 1) * batch_size]
+        batch = torch.tensor(token_ids[batch_idx], dtype=torch.long, device=device)
+        yield batch
 
 
 # ---------------------------------------------------------------------------
@@ -197,6 +255,7 @@ def run_experiment_a(
     batch_size: int,
     device: torch.device,
     seed: int,
+    hf_dataset: str | None = None,
 ) -> dict[str, np.ndarray]:
     """
     Per-token relative contribution ρ_t^(s) = Δ_t^(s) / Σ_j Δ_t^(j)
@@ -205,7 +264,7 @@ def run_experiment_a(
     accum: dict[str, list[np.ndarray]] = {}
 
     with CMSInterceptor(model) as ic:
-        for tokens in make_data_iter(vocab_size, num_batches, seq_len, batch_size, device, seed):
+        for tokens in make_data_iter(vocab_size, num_batches, seq_len, batch_size, device, seed, hf_dataset=hf_dataset):
             ic.clear()
             with torch.no_grad():
                 model(tokens)
@@ -324,12 +383,13 @@ def run_experiment_b(
     batch_size: int,
     device: torch.device,
     seed: int,
+    hf_dataset: str | None = None,
 ) -> list[dict]:
     """
     I_t^(s) = L_t^(\\s) - L_t^full  (positive = level was important for this token)
     """
     freq: dict[int, int] = {}
-    for tokens in make_data_iter(vocab_size, num_batches, seq_len, batch_size, device, seed):
+    for tokens in make_data_iter(vocab_size, num_batches, seq_len, batch_size, device, seed, hf_dataset=hf_dataset):
         for tid in tokens.cpu().numpy().reshape(-1).tolist():
             freq[tid] = freq.get(tid, 0) + 1
     freq_rank = {
@@ -339,7 +399,7 @@ def run_experiment_b(
 
     records: list[dict] = []
 
-    for tokens in make_data_iter(vocab_size, num_batches, seq_len, batch_size, device, seed):
+    for tokens in make_data_iter(vocab_size, num_batches, seq_len, batch_size, device, seed, hf_dataset=hf_dataset):
         with torch.no_grad():
             logits_full = model(tokens)
         lp_full = F.log_softmax(logits_full[:, :-1, :], dim=-1)
@@ -411,6 +471,7 @@ def run_experiment_c(
     device: torch.device,
     seed: int,
     n_tokens_sample: int = 32,
+    hf_dataset: str | None = None,
 ) -> dict[str, dict[str, list[float]]]:
     """
     Spearman correlation between per-token perplexity and per-token CMS gradient norm.
@@ -419,7 +480,7 @@ def run_experiment_c(
         name: {"perplexities": [], "grad_norms": []} for name in cms_level_names
     }
 
-    for tokens in make_data_iter(vocab_size, num_batches, seq_len, batch_size, device, seed):
+    for tokens in make_data_iter(vocab_size, num_batches, seq_len, batch_size, device, seed, hf_dataset=hf_dataset):
         B, T = tokens.shape
 
         with torch.no_grad():
@@ -541,11 +602,20 @@ def main() -> None:
     cfg = OmegaConf.load(args.config)
     cfg = unwrap_config(cfg)
     vocab_size = int(cfg.model.vocab_size)
+    hf_dataset = args.hf_dataset
+
+    if hf_dataset:
+        from transformers import AutoTokenizer
+        _tok = AutoTokenizer.from_pretrained("gpt2")
+        hf_vocab_size = len(_tok)
+        print(f"[info] HF dataset={hf_dataset}, tokenizer vocab={hf_vocab_size} (model vocab={vocab_size})")
+        # vocab_size passed to synthetic fallback only; HF iter uses its own tokenizer
 
     # Experiment A
     print("\n[Exp A] Per-layer representation delta...")
     rho_per_level = run_experiment_a(
-        model, vocab_size, args.num_batches, args.seq_len, args.batch_size, device, args.seed
+        model, vocab_size, args.num_batches, args.seq_len, args.batch_size, device, args.seed,
+        hf_dataset=hf_dataset,
     )
     a_summary = summarize_experiment_a(rho_per_level)
     save_json(a_summary, output_dir / "rq1_a_summary.json")
@@ -555,7 +625,8 @@ def main() -> None:
     # Experiment B
     print("\n[Exp B] Layer ablation per-token loss impact...")
     records = run_experiment_b(
-        model, cms_level_names, vocab_size, args.num_batches, args.seq_len, args.batch_size, device, args.seed
+        model, cms_level_names, vocab_size, args.num_batches, args.seq_len, args.batch_size, device, args.seed,
+        hf_dataset=hf_dataset,
     )
     b_agg: dict[str, list] = collections.defaultdict(list)
     for r in records:
@@ -573,6 +644,7 @@ def main() -> None:
     correlations = run_experiment_c(
         model, cms_level_names, vocab_size, args.num_grad_batches,
         args.seq_len, args.batch_size, device, args.seed,
+        hf_dataset=hf_dataset,
     )
     from scipy.stats import spearmanr
     c_summary = {}

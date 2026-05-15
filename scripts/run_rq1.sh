@@ -16,10 +16,11 @@ uv run python scripts/rq1_analysis.py \
   --config "$CONFIG" \
   --output-dir "$OUTPUT_DIR" \
   --device "$DEVICE" \
-  --num-batches 50 \
-  --num-grad-batches 5 \
-  --seq-len 128 \
-  --batch-size 32
+  --hf-dataset "wikitext,wikitext-103-raw-v1,test" \
+  --num-batches 100 \
+  --num-grad-batches 10 \
+  --seq-len 512 \
+  --batch-size 16
 
 echo ""
 echo "Done. Results:"

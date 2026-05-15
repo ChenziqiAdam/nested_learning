@@ -10,9 +10,9 @@ hydra:
 
 model:
   vocab_size: 32000
-  dim: 256
-  num_layers: 4
-  heads: 4
+  dim: 512
+  num_layers: 12
+  heads: 8
   block_variant: hope_attention
   qk_l2_norm: true
   teach_scale: 0.10
@@ -21,9 +21,9 @@ model:
   freeze_backbone: false
   self_mod_lr: 0.001
   teach_schedule:
-    warmup_steps: 100
-    decay_start: 800
-    decay_duration: 100
+    warmup_steps: 500
+    decay_start: 8000
+    decay_duration: 1000
   titan_level:
     name: titan
     update_period: 8
@@ -60,9 +60,9 @@ model:
 data:
   source: synthetic
   vocab_size: 32000
-  seq_len: 128
-  batch_size: 32
-  dataset_size: 40000
+  seq_len: 512
+  batch_size: 16
+  dataset_size: 200000
   num_workers: 4
 
 train:
@@ -73,8 +73,8 @@ train:
   online_boundary_targets: false
   online_carry_attention_cache: false
   per_layer_teach_signal: false
-  steps: 1000
-  log_interval: 10
+  steps: 10000
+  log_interval: 50
   device: "cuda:0"
   seed: 42
   deterministic: false
@@ -88,7 +88,7 @@ train:
   checkpoint:
     enable: true
     dir: artifacts/rq1_checkpoint
-    save_interval: 1000
+    save_interval: 2000
     save_last: true
     resume_path: null
     resume_tag: null
@@ -106,4 +106,4 @@ logging:
   backend: json
   path: logs/rq1_metrics.json
   project: nested-learning
-  run_name: rq1-pilot
+  run_name: rq1-scaled
